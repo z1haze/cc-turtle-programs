@@ -99,27 +99,21 @@ end
 --- Turn the turtle to the left, update facing position, and save state
 -- @return boolean
 function Aware:turnLeft()
-    if turtle.turnLeft() then
-        self.state.pos.f = self.state.pos.f == 1 and 4 or self.state.pos.f - 1
-        self:saveState(self.state)
+    turtle.turnLeft()
+    self.state.pos.f = self.state.pos.f == 1 and 4 or self.state.pos.f - 1
+    self:saveState(self.state)
 
-        return true
-    end
-
-    return false
+    return true
 end
 
 --- Turn the turtle to the right, update facing position, and save state
 -- @return boolean
 function Aware:turnRight()
-    if turtle.turnRight() then
-        self.state.pos.f = self.state.pos.f == 4 and 1 or self.state.pos.f + 1
-        self:saveState(self.state)
+    turtle.turnRight()
+    self.state.pos.f = self.state.pos.f == 4 and 1 or self.state.pos.f + 1
+    self:saveState(self.state)
 
-        return true
-    end
-
-    return false
+    return true
 end
 
 --- Turn the turtle a requested direction, update facing position, and save state
@@ -260,18 +254,19 @@ function Aware:move(dir, dist, canDig)
                 attackMethod = attackMethod .. string.upper(string.sub(dir, 1, 1)) .. string.sub(dir, 2)
             end
 
-            -- if we detected a block, we need to dig it
+            -- detect a block
             if turtle[detectMethod]() then
                 if canDig then
+                    -- dig the detected block
                     if not turtle[digMethod]() then
-                        return false
+                        fail = true
                     end
                 else
-                    -- if we're not allowed to dig the block, we must fail
+                    -- fail because we dont have permission to dig the block
                     error("I need to dig, but I'm not allowed")
                 end
             else
-                -- try to attack
+                -- since we didnt move, and we didnt detect a block, and we're not out of fuel, must be some entity in the way, attack it!
                 turtle[attackMethod]()
             end
 
@@ -338,9 +333,11 @@ function Aware:moveTo(pos, dig, order)
         if not self:moveToY(pos.y, dig) then
             return false
         end
+
         if not self:moveToX(pos.x, dig) then
             return false
         end
+
         if not self:moveToZ(pos.z, dig) then
             return false
         end
@@ -367,16 +364,17 @@ end
 -- @param dig boolean: can dig
 -- @return boolean
 function Aware:moveToX(coord, dig)
-
     if self.state.pos.x == coord then
         return true
     end
 
     if self.state.pos.x < coord then
         self:turnTo("x")
+
         return self:forward(coord - self.state.pos.x, dig)
     elseif self.state.pos.x > coord then
         self:turnTo("-x")
+
         return self:forward(self.state.pos.x - coord, dig)
     end
 
@@ -388,16 +386,17 @@ end
 -- @param dig boolean: can dig
 -- @return boolean
 function Aware:moveToZ(coord, dig)
-
     if self.state.pos.z == coord then
         return true
     end
 
     if self.state.pos.z < coord then
         self:turnTo("z")
+
         return self:forward(coord - self.state.pos.z, dig)
     elseif self.state.pos.z > coord then
         self:turnTo("-z")
+
         return self:forward(self.state.pos.z - coord, dig)
     end
 
@@ -409,7 +408,6 @@ end
 -- @param dig boolean: can dig
 -- @return boolean
 function Aware:moveToY(coord, dig)
-
     if self.state.pos.y == coord then
         return true
     end
