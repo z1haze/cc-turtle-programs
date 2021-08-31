@@ -40,10 +40,8 @@ function Aware.new()
         }
     end
 
-    if self.state.hasGPS == nil then
-        -- tells us if this turtle can use gps or not, depending on if he has a modem, and can fetch his coordinates from a GPS host
-        self.state.hasGPS = self:hasGPS()
-    end
+    -- tells us if this turtle can use gps or not, depending on if he has a modem, and can fetch his coordinates from a GPS host
+    self.state.hasGPS = self:hasGPS()
 
     -- override the position if we have GPS
     if self.state.hasGPS then
