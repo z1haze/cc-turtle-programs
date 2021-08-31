@@ -208,5 +208,5 @@ end
 
 miner:setCurrentAction("home")
 miner:goHome(miner.aware.state.axis.branch .. miner.aware.state.axis.trunk .. "y")
-miner:unload()
+miner:unload("up")
 miner.aware:deleteState()
