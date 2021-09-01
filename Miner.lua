@@ -43,9 +43,17 @@ function Miner.new(aware)
             trunk = isNorthSouth and 'z' or 'x',
             branch = isNorthSouth and 'x' or 'z',
         }
-
-        self.aware:saveState(self.aware.state)
     end
+
+    if not self.aware.state.blocksTraveled then
+        self.aware.state.blocksTraveled = 0
+    end
+
+    if not self.aware.state.oresMined then
+        self.aware.state.oresMined = 0
+    end
+
+    self.aware:saveState(self.aware.state)
 
     return self
 end
@@ -338,19 +346,51 @@ function Miner:dropTrash()
 end
 
 --- Refuel the turtle with any fuel item from its inventory, except torches
+-- @param targetFuelLevel number: target fuel level
 -- @return boolean
-function Miner:useFuel()
+function Miner:useFuel(targetFuelLevel)
+    -- cache the currently selected slot, so we can put it back when we're done
     local slot = turtle.getSelectedSlot()
 
+    -- loop through the entire inventory
     for i = 1, 16 do
         if not turtle.select(i) then
             return false
         end
 
-        if turtle.refuel(0) then
-            if turtle.getItemDetail(i).name ~= "minecraft:torch" then
-                turtle.refuel(turtle.getItemCount())
+        -- if we've reached our fuel target, we can quit
+        if turtle.getFuelLevel() >= targetFuelLevel then
+            break
+        end
+
+        local itemDetail = turtle.getItemDetail(i)
+
+        -- if the item is able to be used as fuel and is not at torch (we want to keep those)
+        if turtle.refuel(0) and itemDetail.name ~= "minecraft:torch" then
+            -- default coal/charcoal is 80
+            local fuelPer = 80
+
+            -- try to get a better estimate on what the fuel is
+            if itemDetail.name == "minecraft:lava_bucket" then
+                fuelPer = 1000
+            elseif itemDetail.name == "minecraft_coal_block" or itemDetail.name == "minecraft_charcoal_block" then
+                fuelPer = 800
+            elseif itemDetail.name == "immersiveengineering:coke" then
+                fuelPer = 1600
+            elseif itemDetail.name == "immersiveengineering:coal_coke" then
+                fuelPer = 160
             end
+
+            -- get the number of items we can eat for fuel
+            local count = turtle.getItemCount()
+
+            -- reduce the number of items to consume until we are at or below the target fuel level
+            while (turtle.getFuelLevel() + (count * fuelPer)) > targetFuelLevel and count > 1 do
+                count = count - 1
+            end
+
+            -- burn that shit
+            turtle.refuel(count)
         end
     end
 
@@ -572,6 +612,8 @@ function Miner:recursiveDig(dir)
         if self:detect(d) then
             local result, block = self:inspect(d)
             if result and not self.ignore[block.name] then
+                self.aware.state.oresMined = self.aware.state.oresMined + 1
+
                 return true
             end
         end
@@ -675,8 +717,8 @@ function Miner:veinMine(data)
         -- for each block in the current position (bottom and top because it is a 2-tall tunnel)
         for j = 1, 2 do
             -- refuel if necessary
-            if turtle.getFuelLevel() < 100 then
-                self:useFuel()
+            if turtle.getFuelLevel() < 1000 then
+                self:useFuel(1000)
             end
 
             -- consolidate partial stacks where possible
@@ -761,6 +803,101 @@ function Miner:setCurrentBlock(n)
     self.aware.state.currentBlock = n
 
     self.aware:saveState(self.aware.state)
+end
+
+--- ===============================================================
+--- GUI METHODS
+--- ===============================================================
+
+function Miner:clearLine()
+    -- used to clear a line at the previously set cursor postion
+    local x, y = term.getCursorPos()
+
+    term.setCursorPos(1, y)
+    write("|                                     |")
+    term.setCursorPos(x, y)
+end
+
+function Miner:guiStats()
+    local action
+
+    if self.aware.state.currentAction == "vein" then
+        action = "Branch Mining"
+    elseif self.aware.state.currentAction == "back" then
+        action = "Returning To Trunk"
+    elseif self.aware.state.currentAction == "trunk" then
+        action = "Trunk Mining"
+    elseif self.aware.state.currentAction == "descend" then
+        action = "Descending"
+    elseif self.aware.state.currentAction == "home" then
+        action = "Going Home"
+    elseif self.aware.state.action == "done" then
+        action = "Awaiting Orders"
+    else
+        action = "Preparing To Work"
+    end
+
+    -- write the current action line
+    term.setCursorPos(3, 2)
+    self:clearLine()
+    write("Current Action: " .. action .. "...")
+
+    -- handle writing the operation complete vs current branch details
+    if self.aware.state.action == "done" then
+        term.setCursorPos(3, 4)
+        self:clearLine()
+        write("Operation Complete. Mined " .. self.aware.state.branchCount .. " branches of " .. self.aware.state.branchLength .. "length")
+    else
+        -- mining details
+        term.setCursorPos(3, 4)
+        self:clearLine()
+        local val = "On Branch " .. self.aware.state.currentBranch .. "/" .. self.aware.state.branchCount
+
+        if self.aware.state.currentBlock then
+            val = val .. ", Block " .. self.aware.state.currentBlock .. "/" .. self.aware.state.branchLength
+        end
+
+        write(val)
+    end
+
+    -- total blocks traveled
+    term.setCursorPos(3, 6)
+    self:clearLine()
+    write("Distance Traveled : " .. self.aware.state.blocksTraveled)
+
+    -- total ores mined
+    term.setCursorPos(3, 7)
+    self:clearLine()
+    write("Ores Mined        : " .. self.aware.state.oresMined)
+
+    -- current fuel level
+    term.setCursorPos(3, 8)
+    self:clearLine()
+    write("Fuel Level        : " .. turtle.getFuelLevel())
+end
+
+function Miner:guiFrame()
+    term.clear()
+
+    -- side borders
+    for i = 1, 13 do
+        term.setCursorPos(1, i)
+        write("|")
+        term.setCursorPos(39, i)
+        write("|")
+    end
+
+    -- top border
+    term.setCursorPos(1, 1)
+    write("O-------------------------------------O")
+
+    -- middle line
+    term.setCursorPos(1, 5)
+    write("O-------------------------------------O")
+
+    -- bottom border
+    term.setCursorPos(1, 13)
+    write("O-------------------------------------O")
 end
 
 return Miner

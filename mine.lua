@@ -7,6 +7,7 @@ textutils.slowPrint("...", 5)
 
 -- if this file exists, we know that we need to resume a previous task
 local resume = fs.exists(fs.combine("database", shell.getRunningProgram(), "state"))
+local running = false
 
 local Aware = require("Aware")
 local aware = Aware.new()
@@ -115,98 +116,118 @@ function setup()
         miner.aware.state.yLevel = targetY
     end
 
+    -- setup the GUI frame
+    miner:guiFrame()
+    running = true
     miner.aware:saveState(miner.aware.state)
 end
 
-if not resume then
-    setup()
-end
-
-miner:useFuel()
-
-if not miner.aware:equip("minecraft:diamond_pickaxe", "right") then
-    error()
-end
-
-if resume then
-    if not miner.aware.state.hasGPS then
-        error("Sorry, too unreliable to recover without GPS")
+function doIt()
+    if not resume then
+        setup()
     end
 
-    write("Resuming from last checkpoint")
-    textutils.slowPrint("...", 5)
+    miner:useFuel(1000)
 
-    if miner.aware.state.checkpoint then
-        miner.aware:moveTo(miner.aware.state.checkpoint, true, "y" .. miner.aware.state.axis.trunk .. miner.aware.state.axis.branch)
-    else
-        -- if we are home or we are in the main chute
-        if (miner.aware.state.pos.x == miner.aware.state.home.x and miner.aware.state.pos.z == miner.aware.state.home.z) and miner.aware.state.currentBranch < miner.aware.state.branchCount then
-            miner.aware:moveToY(miner.aware.state.yLevel, true)
+    if not miner.aware:equip("minecraft:diamond_pickaxe", "right") then
+        error()
+    end
+
+    if resume then
+        running = true
+
+        if not miner.aware.state.hasGPS then
+            error("Sorry, too unreliable to recover without GPS")
+        end
+
+        if miner.aware.state.checkpoint then
+            miner.aware:moveTo(miner.aware.state.checkpoint, true, "y" .. miner.aware.state.axis.trunk .. miner.aware.state.axis.branch)
         else
-            miner:goHome(miner.aware.state.axis.branch .. miner.aware.state.axis.trunk .. "y")
-            error("No checkpoint, unable to continue. I Came home like a good boy.")
+            -- if we are home or we are in the main chute
+            if (miner.aware.state.pos.x == miner.aware.state.home.x and miner.aware.state.pos.z == miner.aware.state.home.z) and miner.aware.state.currentBranch < miner.aware.state.branchCount then
+                miner:setCurrentAction("descend")
+                miner.aware:moveToY(miner.aware.state.yLevel, true)
+                miner:setCurrentAction()
+            else
+                miner:setCurrentAction("home")
+                miner:goHome(miner.aware.state.axis.branch .. miner.aware.state.axis.trunk .. "y")
+                error("No checkpoint, unable to continue. I Came home like a good boy.")
+            end
         end
-    end
-else
-    miner.aware:moveToY(miner.aware.state.yLevel, true)
-end
-
-local currentAction = miner.aware.state.currentAction
-
-for i = miner.aware.state.currentBranch, miner.aware.state.branchCount do
-    miner:setCurrentBranch(i)
-
-    -- mine out the branch
-    if not currentAction or currentAction == "vein" then
-        miner:veinMine({
-            f = 2,
-            l = miner.aware.state.branchLength,
-            b = miner.aware.state.currentBlock,
-            t = true,
-            c = true,
-            a = currentAction and currentAction or "vein"
-        })
+    else
+        miner.aware:moveToY(miner.aware.state.yLevel, true)
     end
 
-    -- move back to the trunk
-    if currentAction ~= "trunk" then
-        miner:setCurrentAction("back")
+    local currentAction = miner.aware.state.currentAction
 
-        local coords = {
-            y = miner.aware.state.yLevel + 1,
-            f = 4
-        }
+    for i = miner.aware.state.currentBranch, miner.aware.state.branchCount do
+        miner:setCurrentBranch(i)
 
-        coords[miner.aware.state.axis.trunk] = miner.aware.state.pos[miner.aware.state.axis.trunk]
-        coords[miner.aware.state.axis.branch] = miner.aware.state.home[miner.aware.state.axis.branch]
-
-        miner.aware:moveTo(coords, true, "zxy")
-
-        -- if we have more trunk to dig, move down the main level
-        if i < miner.aware.state.branchCount and miner.aware.state.pos.y == miner.aware.state.yLevel + 1 then
-            miner:move("down")
+        -- mine out the branch
+        if not currentAction or currentAction == "vein" then
+            miner:veinMine({
+                f = 2,
+                l = miner.aware.state.branchLength,
+                b = miner.aware.state.currentBlock,
+                t = true,
+                c = true,
+                a = currentAction and currentAction or "vein"
+            })
         end
 
-        miner:setCurrentAction()
+        -- move back to the trunk
+        if currentAction ~= "trunk" then
+            miner:setCurrentAction("back")
+
+            local coords = {
+                y = miner.aware.state.yLevel + 1,
+                f = 4
+            }
+
+            coords[miner.aware.state.axis.trunk] = miner.aware.state.pos[miner.aware.state.axis.trunk]
+            coords[miner.aware.state.axis.branch] = miner.aware.state.home[miner.aware.state.axis.branch]
+
+            miner.aware:moveTo(coords, true, "zxy")
+
+            -- if we have more trunk to dig, move down the main level
+            if i < miner.aware.state.branchCount and miner.aware.state.pos.y == miner.aware.state.yLevel + 1 then
+                miner:move("down")
+            end
+
+            miner:setCurrentAction()
+        end
+
+        if i < miner.aware.state.branchCount then
+            miner:veinMine({
+                f = 1,
+                l = miner.aware.state.branchGap + 2,
+                b = miner.aware.state.currentBlock,
+                t = false,
+                c = true,
+                a = "trunk"
+            })
+        end
+
+        if currentAction then
+            currentAction = nil
+        end
     end
 
-    if i < miner.aware.state.branchCount then
-        miner:veinMine({
-            f = 1,
-            l = miner.aware.state.branchGap + 2,
-            b = miner.aware.state.currentBlock,
-            t = false,
-            c = true,
-            a = "trunk"
-        })
-    end
+    miner:setCurrentAction("home")
+    miner:goHome(miner.aware.state.axis.branch .. miner.aware.state.axis.trunk .. "y")
+    miner:unload("up")
+    miner:setCurrentAction("done")
+    miner.aware:deleteState()
+end
 
-    if currentAction then
-        currentAction = nil
+function listen()
+    while true do
+        local event = os.pullEvent()
+
+        if event == "stateSaved" and running then
+            miner:guiStats()
+        end
     end
 end
 
-miner:setCurrentAction("home")
-miner:goHome(miner.aware.state.axis.branch .. miner.aware.state.axis.trunk .. "y")
-miner:unload("up")
-miner.aware:deleteState()
+parallel.waitForAny(doIt, listen)

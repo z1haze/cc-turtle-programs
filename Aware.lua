@@ -85,6 +85,8 @@ function Aware:saveState(state)
 
     file.write(textutils.serialize(state))
     file.close()
+
+    os.queueEvent("stateSaved")
 end
 
 --- Delete the state
@@ -278,6 +280,9 @@ function Aware:move(dir, dist, canDig)
                 return false
             end
         end
+
+        -- increment the number of blocks moved
+        self.state.blocksTraveled = self.state.blocksTraveled + 1
 
         -- update stored position
         if dir == "up" or dir == "down" then

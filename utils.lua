@@ -35,6 +35,7 @@ utils.minerTrash = {
     ["minecraft:oak_leaves"] = true,
     ["minecraft:oak_planks"] = true,
     ["minecraft:sand"] = true,
+    ["minecraft:sandstone"] = true,
     ["minecraft:stone"] = true,
 
     ["chisel:basalt2"] = true,
