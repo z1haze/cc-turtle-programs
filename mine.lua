@@ -109,6 +109,7 @@ function setup()
     miner.aware.state.branchLength = branchLength
     miner.aware.state.branchGap = branchGap
     miner.aware.state.currentBranch = 1
+    miner.aware.state.placeTorches = placeTorches
 
     if not miner.aware.state.hasGPS then
         miner.aware.state.yLevel = miner.aware.state.pos.y - (currentY - targetY)
@@ -127,6 +128,8 @@ function doIt()
         setup()
     end
 
+    running = true
+
     miner:useFuel(1000)
 
     if not miner.aware:equip("minecraft:diamond_pickaxe", "right") then
@@ -134,14 +137,14 @@ function doIt()
     end
 
     if resume then
-        running = true
-
         if not miner.aware.state.hasGPS then
             error("Sorry, too unreliable to recover without GPS")
         end
 
         if miner.aware.state.checkpoint then
+            miner:setCurrentAction("checkpoint")
             miner.aware:moveTo(miner.aware.state.checkpoint, true, "y" .. miner.aware.state.axis.trunk .. miner.aware.state.axis.branch)
+            miner:setCurrentAction()
         else
             -- if we are home or we are in the main chute
             if (miner.aware.state.pos.x == miner.aware.state.home.x and miner.aware.state.pos.z == miner.aware.state.home.z) and miner.aware.state.currentBranch < miner.aware.state.branchCount then
@@ -155,7 +158,9 @@ function doIt()
             end
         end
     else
+        miner:setCurrentAction("descend")
         miner.aware:moveToY(miner.aware.state.yLevel, true)
+        miner:setCurrentAction()
     end
 
     local currentAction = miner.aware.state.currentAction
@@ -169,7 +174,7 @@ function doIt()
                 f = 2,
                 l = miner.aware.state.branchLength,
                 b = miner.aware.state.currentBlock,
-                t = true,
+                t = miner.aware.state.placeTorches,
                 c = true,
                 a = currentAction and currentAction or "vein"
             })
@@ -217,7 +222,8 @@ function doIt()
     miner:goHome(miner.aware.state.axis.branch .. miner.aware.state.axis.trunk .. "y")
     miner:unload("up")
     miner:setCurrentAction("done")
-    miner.aware:deleteState()
+    miner:guiStats() -- show the final state
+    --miner.aware:deleteState()
 end
 
 function listen()

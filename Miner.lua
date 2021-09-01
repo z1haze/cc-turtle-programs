@@ -23,6 +23,36 @@ function Miner.new(aware)
         ["down"] = "up"
     }
 
+    self.fuelValues = {
+        ["minecraft:coal"] = 80,
+        ["minecraft:charcoal"] = 80,
+        ["minecraft:lava_bucket"] = 1000,
+        ["minecraft_coal_block"] = 800,
+        ["minecraft_charcoal_block"] = 800,
+        ["immersiveengineering:coke"] = 1600,
+        ["immersiveengineering:coal_coke"] = 160,
+    }
+
+    self.keepItems = {
+        ["minecraft:torch"] = true,
+        ["computercraft:wireless_modem_advanced"] = true
+    }
+
+    self.resourceMessages = {
+        action = {
+            ["vein"] = "Branch Mining",
+            ["trunk"] = "Trunk Mining",
+            ["back"] = "Completing Branch",
+            ["descend"] = "Descending",
+            ["home"] = "Heading Home",
+            ["pitstop"] = "Pitstop",
+            ["checkpoint"] = "Checkpoint",
+            ["done"] = "Finished"
+        }
+    }
+
+    self.fuelReserve = 1000
+
     -- blocks to throw out when out of space
     self.trash = utils.minerTrash
 
@@ -346,7 +376,7 @@ function Miner:dropTrash()
 end
 
 --- Refuel the turtle with any fuel item from its inventory, except torches
--- @param targetFuelLevel number: target fuel level
+-- @param targetFuelLevel number: target fuel level for the turtle
 -- @return boolean
 function Miner:useFuel(targetFuelLevel)
     -- cache the currently selected slot, so we can put it back when we're done
@@ -367,18 +397,13 @@ function Miner:useFuel(targetFuelLevel)
 
         -- if the item is able to be used as fuel and is not at torch (we want to keep those)
         if turtle.refuel(0) and itemDetail.name ~= "minecraft:torch" then
-            -- default coal/charcoal is 80
-            local fuelPer = 80
+            local fuelPer
 
             -- try to get a better estimate on what the fuel is
-            if itemDetail.name == "minecraft:lava_bucket" then
-                fuelPer = 1000
-            elseif itemDetail.name == "minecraft_coal_block" or itemDetail.name == "minecraft_charcoal_block" then
-                fuelPer = 800
-            elseif itemDetail.name == "immersiveengineering:coke" then
-                fuelPer = 1600
-            elseif itemDetail.name == "immersiveengineering:coal_coke" then
-                fuelPer = 160
+            if self.fuelValues[itemDetail.name] then
+                fuelPer = self.fuelValues[itemDetail.name]
+            else
+                fuelPer = 80
             end
 
             -- get the number of items we can eat for fuel
@@ -396,6 +421,40 @@ function Miner:useFuel(targetFuelLevel)
 
     return turtle.select(slot)
 end
+
+--- Return a table containing inventory slots with fuel items, and the total value of fuel in each slot, as well as the grand total value of all fuel slots added together
+-- @return table, number
+--function Miner:getFuelInventory()
+--    local slot = turtle.getSelectedSlot()
+--    local slotsWithFuel = {}
+--    local totalFuelInventory = 0
+--
+--    for i = 1, 16 do
+--        local itemDetail = turtle.getItemDetail(i)
+--
+--        if itemDetail then
+--            turtle.select(i)
+--
+--            if turtle.refuel(0) then
+--                local count = itemDetail.count
+--                local fuelPer = self.fuelValues[itemDetail.name]
+--
+--                if fuelPer then
+--                    slotsWithFuel[tostring(i)] = count * fuelPer
+--                end
+--            end
+--        end
+--    end
+--
+--    for _, v in pairs(slotsWithFuel) do
+--        totalFuelInventory = totalFuelInventory + v
+--    end
+--
+--    -- reselect previously selected inventory slot
+--    turtle.select(slot)
+--
+--    return slotsWithFuel, totalFuelInventory
+--end
 
 --- Make the turtle unload its entire inventory to the block at a particular direction
 -- @param d string,nil: direction
@@ -421,15 +480,39 @@ function Miner:unload(d)
     -- cache the slot we already have selected
     local slot = turtle.getSelectedSlot()
 
+    -- an aggregate total of fuel that we choose to keep in the turtle inventory as a fuel reserve
+    -- this is needed so once we accumulate enough to meet the fuel reserve, we can dump the rest
+    local fuelKept = 0
+
     for i = 1, 16 do
         local item = turtle.getItemDetail(i)
 
-        if item and (item.name ~= "minecraft:torch" and item.name ~= "computercraft:wireless_modem_advanced") then
-            if not turtle.select(i) then
-                return false
+        if item and not self.keepItems[item.name] then
+            local amountToDrop
+
+            -- if the item can be used as fuel, we need to do some extra processing
+            -- because we want to keep _some_ fuel in the inventory as a reserve
+            if self.fuelValues[item.name] then
+                local amountToKeep = 0
+
+                for j = 1, item.count do
+                    -- if we've already kept enough fuel we
+                    if fuelKept >= self.fuelReserve then
+                        break
+                    end
+
+                    amountToKeep = j
+                    fuelKept = fuelKept + self.fuelValues[item.name]
+                end
+
+                amountToDrop = item.count - amountToKeep
+            else
+                amountToDrop = item.count
             end
 
-            if not self:drop(d, item.count) then
+            turtle.select(i)
+
+            if not self:drop(d, amountToDrop) then
                 return false
             end
         end
@@ -522,6 +605,10 @@ end
 --- Make the turtle return to home to unload its inventory, and move back to its previous position
 -- @return boolean
 function Miner:pitStop()
+    local lastAction = self.aware.state.currentAction
+
+    self:setCurrentAction("pitstop")
+
     local loc = self.aware.state.pos
 
     self.aware.state.pos.temp = { x = loc.x, y = loc.y, z = loc.z, f = loc.f }
@@ -593,6 +680,8 @@ function Miner:pitStop()
 
     -- unset temp loc
     self.aware.state.pos.temp = nil
+
+    self:setCurrentAction(lastAction)
 
     return true
 end
@@ -810,7 +899,6 @@ end
 --- ===============================================================
 
 function Miner:clearLine()
-    -- used to clear a line at the previously set cursor postion
     local x, y = term.getCursorPos()
 
     term.setCursorPos(1, y)
@@ -819,45 +907,41 @@ function Miner:clearLine()
 end
 
 function Miner:guiStats()
-    local action
-
-    if self.aware.state.currentAction == "vein" then
-        action = "Branch Mining"
-    elseif self.aware.state.currentAction == "back" then
-        action = "Returning To Trunk"
-    elseif self.aware.state.currentAction == "trunk" then
-        action = "Trunk Mining"
-    elseif self.aware.state.currentAction == "descend" then
-        action = "Descending"
-    elseif self.aware.state.currentAction == "home" then
-        action = "Going Home"
-    elseif self.aware.state.action == "done" then
-        action = "Awaiting Orders"
-    else
-        action = "Preparing To Work"
-    end
+    local action = self.aware.state.currentAction
+    local actionResourceMsg = action and self.resourceMessages.action[action] or "Awaiting Work"
+    local actionMessage
 
     -- write the current action line
     term.setCursorPos(3, 2)
     self:clearLine()
-    write("Current Action: " .. action .. "...")
+    write("Current Action: " .. actionResourceMsg .. "...")
 
-    -- handle writing the operation complete vs current branch details
-    if self.aware.state.action == "done" then
-        term.setCursorPos(3, 4)
-        self:clearLine()
-        write("Operation Complete. Mined " .. self.aware.state.branchCount .. " branches of " .. self.aware.state.branchLength .. "length")
-    else
-        -- mining details
-        term.setCursorPos(3, 4)
-        self:clearLine()
-        local val = "On Branch " .. self.aware.state.currentBranch .. "/" .. self.aware.state.branchCount
+    if action == "descend" then
+        actionMessage = "Descending to Y-Level " .. self.aware.state.yLevel
+    elseif action == "vein" then
+        actionMessage = "On Branch " .. self.aware.state.currentBranch .. "/" .. self.aware.state.branchCount
 
         if self.aware.state.currentBlock then
-            val = val .. ", Block " .. self.aware.state.currentBlock .. "/" .. self.aware.state.branchLength
+            actionMessage = actionMessage .. ", Block " .. self.aware.state.currentBlock .. "/" .. self.aware.state.branchLength
         end
+    elseif action == "back" then
+        actionMessage = "Moving back to the trunk"
+    elseif action == "trunk" then
+        actionMessage = "Mining trunk to branch " .. self.aware.state.currentBranch + 1
+    elseif action == "pitstop" then
+        actionMessage = "Shitter's full, gotta dump"
+    elseif action == "checkpoint" then
+        actionMessage = "Moving to saved checkpoint"
+    elseif action == "home" then
+        actionMessage = "Finishing mining, heading home"
+    elseif action == "done" then
+        actionMessage = "Operation Complete. Mined " .. self.aware.state.branchCount .. " branches of " .. self.aware.state.branchLength .. "length"
+    end
 
-        write(val)
+    if actionMessage then
+        term.setCursorPos(3, 4)
+        self:clearLine()
+        write(actionMessage)
     end
 
     -- total blocks traveled
