@@ -958,6 +958,11 @@ function Miner:guiStats()
     term.setCursorPos(3, 8)
     self:clearLine()
     write("Fuel Level        : " .. turtle.getFuelLevel())
+
+    -- target y level
+    term.setCursorPos(3, 9)
+    self:clearLine()
+    write("Target Y-Level    : " .. self.aware.state.yLevel)
 end
 
 function Miner:guiFrame()
