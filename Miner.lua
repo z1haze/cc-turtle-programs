@@ -613,50 +613,50 @@ function Miner:pitStop()
 
     self.aware.state.pos.temp = { x = loc.x, y = loc.y, z = loc.z, f = loc.f }
 
+    -- has the turtle been successfully unloaded?
+    local unloadSuccess = false
+
     -- if has some onboard portable chest-like item, try to use that
     -- places down the storage item
     -- unloads inventory into the storage item (self:unload())
     -- digs digs the block back up and carries on
     if self:selectStorageItem() then
-        local done = false
+        local canPlace = false
+        local placeDir
 
-        for i = 1, 4 do
-            if self:detect() then
-                self:turn("right")
-            else
-                self:_p()
-                self:unload()
-                self:dig()
-
-                done = true
+        -- find a spot to place the chest
+        for _ = 1, 4 do
+            if not self:detect() then
+                canPlace = true
                 break
             end
+
+            self:turn("right")
         end
 
-        -- if there were no empty blocks on any side, check above and below
-        -- we are just looking for a place to put the storage block so we can unload into it
-        if not done then
+        -- if we still can't place, check above and below
+        if not canPlace then
             if not self:detect("up") then
-                self:_p("up")
-                self:unload("up")
-                self:dig("up")
-
-                done = true
+                canPlace = true
+                placeDir = "up"
             elseif not self:detect("down") then
-                self:_p("down")
-                self:unload("down")
-                self:dig("down")
-
-                done = true
+                canPlace = true
+                placeDir = "down"
             end
         end
 
-        -- if we somehow did not have an empty space on any side, go home, and error because something broke
-        if not done then
-            self:goHome(self.aware.state.axis.branch .. self.aware.state.axis.trunk .. "y")
-            error("I thought I had storage, but I couldn't find it.")
+        -- place the chest, unload into the chest, dig the chest back up
+        if canPlace then
+            self:_p(placeDir)
+
+            unloadSuccess = self:unload(placeDir)
+
+            self:dig(placeDir)
         end
-    else
+    end
+
+    -- if the done flag is false, that means we did not unload everything into an onboard storage item, so we need to go home and unload
+    if not unloadSuccess then
         -- go home
         if not self:goHome(self.aware.state.axis.branch .. self.aware.state.axis.trunk .. "y") then
             return false
