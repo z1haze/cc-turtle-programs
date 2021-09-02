@@ -935,7 +935,7 @@ function Miner:guiStats()
     elseif action == "home" then
         actionMessage = "Finishing mining, heading home"
     elseif action == "done" then
-        actionMessage = "Operation Complete. Mined " .. self.aware.state.branchCount .. " branches of " .. self.aware.state.branchLength .. "length"
+        actionMessage = "Operation Complete. Mined " .. self.aware.state.branchCount .. "B " .. self.aware.state.branchLength .. "L"
     end
 
     if actionMessage then
