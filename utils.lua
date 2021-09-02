@@ -54,6 +54,7 @@ utils.minerTrash = {
     ["quark:smooth_basalt"] = true,
 
     ["create:dark_scoria"] = true,
+    ["create:dolomite"] = true,
     ["create:gabbro"] = true,
     ["create:natural_scoria"] = true,
     ["create:scoria"] = true,
