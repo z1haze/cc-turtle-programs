@@ -223,7 +223,7 @@ function doIt()
     miner:unload("up")
     miner:setCurrentAction("done")
     miner:guiStats() -- show the final state
-    --miner.aware:deleteState()
+    miner.aware:deleteState()
 end
 
 function listen()
