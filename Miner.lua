@@ -31,6 +31,7 @@ function Miner.new(aware)
         ["minecraft_charcoal_block"] = 800,
         ["immersiveengineering:coke"] = 1600,
         ["immersiveengineering:coal_coke"] = 160,
+        ["modern_industrialization:lignite_coal"] = 80
     }
 
     self.keepItems = utils.minerKeep
@@ -721,6 +722,7 @@ function Miner:recursiveDig(dir)
     -- @param d string: direction
     local function dig(d)
         self:dig(d)
+        self:freeUpSpace()
         self:move(d)
         self:recursiveDig(d)
         self:move(d, true) -- moves the inverse
@@ -781,6 +783,28 @@ function Miner:recursiveDig(dir)
     return true
 end
 
+function Miner:freeUpSpace()
+    -- refuel if necessary
+    if turtle.getFuelLevel() < 1000 then
+        self:useFuel(1000)
+    end
+
+    -- consolidate partial stacks where possible
+    if #self:getEmptySlots() <= 1 then
+        self:compact()
+    end
+
+    -- check if there are empty slots, dump any useless blocks to save space
+    if #self:getEmptySlots() <= 1 then
+        self:dropTrash()
+    end
+
+    -- if after dump useless blocks the empty space is 1, go unload
+    if #self:getEmptySlots() <= 1 then
+        self:pitStop()
+    end
+end
+
 --- Helper function to branch vein mine
 -- @param data table
 function Miner:veinMine(data)
@@ -811,25 +835,7 @@ function Miner:veinMine(data)
 
         -- for each block in the current position (bottom and top because it is a 2-tall tunnel)
         for j = 1, 2 do
-            -- refuel if necessary
-            if turtle.getFuelLevel() < 1000 then
-                self:useFuel(1000)
-            end
-
-            -- consolidate partial stacks where possible
-            if #self:getEmptySlots() <= 1 then
-                self:compact()
-            end
-
-            -- check if there are empty slots, dump any useless blocks to save space
-            if #self:getEmptySlots() <= 1 then
-                self:dropTrash()
-            end
-
-            -- if after dump useless blocks the empty space is 1, go unload
-            if #self:getEmptySlots() <= 1 then
-                self:pitStop()
-            end
+            self:freeUpSpace()
 
             -- recursive dig the blocks on this level
             self:recursiveDig("forward")
