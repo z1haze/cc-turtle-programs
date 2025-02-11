@@ -33,10 +33,7 @@ function Miner.new(aware)
         ["immersiveengineering:coal_coke"] = 160,
     }
 
-    self.keepItems = {
-        ["minecraft:torch"] = true,
-        ["computercraft:wireless_modem_advanced"] = true
-    }
+    self.keepItems = utils.minerKeep
 
     self.resourceMessages = {
         action = {
@@ -79,8 +76,8 @@ function Miner.new(aware)
         self.aware.state.blocksTraveled = 0
     end
 
-    if not self.aware.state.oresMined then
-        self.aware.state.oresMined = 0
+    if not self.aware.state.collected then
+        self.aware.state.collected = 0
     end
 
     self.aware:saveState(self.aware.state)
@@ -362,12 +359,16 @@ function Miner:dropTrash()
     for i = 1, 16 do
         local item = turtle.getItemDetail(i)
 
-        if item and self.trash[item.name] then
-            if not turtle.select(i) then
-                return false
-            end
-            if not self:drop("forward", item.count) then
-                return false
+        if item then
+            -- if explicitly trashed
+            -- if not and ore and not explicitly set to keep
+            if self.trash[item.name] or (string.sub(item.name, -4) ~= "_ore" and not self.keepItems[item.name]) then
+                if not turtle.select(i) then
+                    return false
+                end
+                if not self:drop("forward", item.count) then
+                    return false
+                end
             end
         end
     end
@@ -473,7 +474,7 @@ function Miner:unload(d)
     local _, details = self:inspect(d)
 
     -- if the item i'm supposed to be unloading into is not a storage item, wtf are you even doing
-    if not self:isStorageItem(details) and not details.tags["forge:chests"] then
+    if not self:isStorageItem(details) and not details.tags["forge:chests"] and not details.tags["c:chests"] then
         error("Cannot deposit items into " .. details.name)
     end
 
@@ -700,10 +701,15 @@ function Miner:recursiveDig(dir)
     local function check(d)
         if self:detect(d) then
             local result, block = self:inspect(d)
-            if result and not self.ignore[block.name] then
-                self.aware.state.oresMined = self.aware.state.oresMined + 1
 
-                return true
+            -- if its an ore
+            -- if its not ignored
+            if result then
+                if (string.sub(block.name, -4) == "_ore" and not self.ignore[block.name]) or self.keepItems[block.name] then
+                    self.aware.state.collected = self.aware.state.collected + 1
+
+                    return true
+                end
             end
         end
 
@@ -952,7 +958,7 @@ function Miner:guiStats()
     -- total ores mined
     term.setCursorPos(3, 7)
     self:clearLine()
-    write("Ores Mined        : " .. self.aware.state.oresMined)
+    write("Blocks Collected  : " .. self.aware.state.collected)
 
     -- current fuel level
     term.setCursorPos(3, 8)
@@ -987,6 +993,10 @@ function Miner:guiFrame()
     -- bottom border
     term.setCursorPos(1, 13)
     write("O-------------------------------------O")
+
+    -- move cursor to bottom
+    local w, h = term.getSize()
+    term.setCursorPos(1, h)
 end
 
 return Miner
