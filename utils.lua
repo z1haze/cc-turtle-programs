@@ -21,7 +21,14 @@ utils.minerKeep = {
     ["computercraft:wireless_modem_advanced"] = true
 }
 
-utils.minerTrash = {}
+utils.minerTrash = {
+    ["minecraft:cobblestone"] = true,
+    ["minecraft:cobbled_deepslate"] = true,
+    ["minecraft:gravel"] = true,
+    ["minecraft:andesite"] = true,
+    ["minecraft:granite"] = true,
+    ["minecraft:diorite"] = true
+}
 
 utils.minerIgnore = utils.deepCopy(utils.minerTrash)
 utils.minerIgnore["minecraft:torch"] = true

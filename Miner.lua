@@ -363,7 +363,7 @@ function Miner:dropTrash()
         if item then
             -- if explicitly trashed
             -- if not and ore and not explicitly set to keep
-            if self.trash[item.name] or (string.sub(item.name, -4) ~= "_ore" and not self.keepItems[item.name]) then
+            if self.trash[item.name] and not self.keepItems[item.name] then
                 if not turtle.select(i) then
                     return false
                 end
