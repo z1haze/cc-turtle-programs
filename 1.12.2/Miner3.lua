@@ -665,8 +665,7 @@ function Miner.create(data, logger)
             traverseMovements(true)
             aware.home("xzy", true)
             logger.info("Stopping the program at relative coordinates " .. aware.getStringLocation(aware.getLocation()))
-            os.exit()
-
+            return
         end
     end
 

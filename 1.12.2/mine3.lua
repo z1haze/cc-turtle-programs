@@ -159,6 +159,7 @@ function main()
             ["minecraft:stone"] = true,     -- covers stone, granite, diorite, andesite (all metadata variants)
             ["minecraft:cobblestone"] = true,
             ["minecraft:gravel"] = true,
+            ["minecraft:obsidian"] = true
         },
         storage = {
             ["minecraft:chest"] = true,
