@@ -3,11 +3,11 @@ if not turtle then
 end
 
 local files = {
-    ["R0NKhzE6"] = "Aware.lua",
-    ["7vun2WwB"] = "Miner.lua",
-    ["r8gawpWC"] = "mine.lua",
-    ["BDEmJuZ1"] = "startup.lua",
-    ["rnatyneZ"] = "utils.lua",
+    ["59cMumAZ"] = "Aware.lua",
+    ["zqsAEBD0"] = "Miner.lua",
+    ["vnAMPtr9"] = "mine.lua",
+    ["cxPfd3z7"] = "startup.lua",
+    ["8xVqt0wz"] = "utils.lua",
 }
 
 for code, name in pairs(files) do

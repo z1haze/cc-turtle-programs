@@ -2,556 +2,454 @@ if not turtle then
     error("Turtle required!")
 end
 
-local Miner = {}
+local utils = require("utils")
+local programName = shell.getRunningProgram()
+local Aware = {}
 
-Miner.__index = Miner
+Aware.__index = Aware
 
---- new Miner constructor
--- @param aware Aware: Aware instance
--- @return Miner
-function Miner.new(aware)
-    local self = setmetatable({}, Miner)
-    local utils = require("utils")
+--- Aware object constructor
+-- @param pos table: position table
+-- @return Aware
+function Aware.new()
+    local self = setmetatable({}, Aware)
 
-    self.aware = aware
+    -- the file path where the state is written
+    self.dbPath = fs.combine("database", programName, "state")
 
-    -- table to return the opposite direction
-    self.invert = {
-        ["forward"] = "back",
-        ["back"] = "forward",
-        ["up"] = "down",
-        ["down"] = "up"
+    -- load any existing state
+    self.state = self:getState()
+
+    -- allows us to always refer to 1 as forward, 2 as right, 3 as back, and 4 as left, even when using absolute positioning from GPS
+    self.directionMap = {
+        { 1, 2, 3, 4 },
+        { 2, 3, 4, 1 },
+        { 3, 4, 1, 2 },
+        { 4, 1, 2, 3 }
     }
 
-    self.fuelValues = {
-        ["minecraft:coal"] = 80,
-        ["minecraft:lava_bucket"] = 1000,
-        ["minecraft:coal_block"] = 800
-    }
-
-    self.keepItems = utils.minerKeep
-
-    self.resourceMessages = {
-        action = {
-            ["vein"] = "Branch Mining",
-            ["trunk"] = "Trunk Mining",
-            ["back"] = "Completing Branch",
-            ["descend"] = "Descending",
-            ["home"] = "Heading Home",
-            ["pitstop"] = "Pitstop",
-            ["checkpoint"] = "Checkpoint",
-            ["done"] = "Finished"
-        }
-    }
-
-    self.fuelReserve = 1000
-
-    -- blocks to throw out when out of space
-    self.trash = utils.minerTrash
-
-    -- blocks to ignore when vein mining
-    self.ignore = utils.minerIgnore
-
-    -- table containing valid storage block n
-    self.validStorage = utils.minerStorage
-
-    -- save the axis for which the turtle uses for forward/backward and lateral movements
-    if not self.aware.state.axis then
-        -- if facing 1 (-z) or 3 (z)
-        -- if facing 2 (x) or 4 (-x)
-
-        local isNorthSouth = self.aware.state.home.f == 1 or self.aware.state.home.f == 3
-
-        self.aware.state.axis = {
-            trunk = isNorthSouth and 'z' or 'x',
-            branch = isNorthSouth and 'x' or 'z',
+    -- default state
+    if not self.state then
+        self.state = {
+            pos = {
+                x = 0,
+                y = 0,
+                z = 0,
+                f = 1
+            }
         }
     end
 
-    if not self.aware.state.blocksTraveled then
-        self.aware.state.blocksTraveled = 0
+    -- tells us if this turtle can use gps or not, depending on if he has a modem, and can fetch his coordinates from a GPS host
+    self.state.hasGPS = self:hasGPS()
+
+    -- override the position if we have GPS
+    if self.state.hasGPS then
+        self.state.pos = self:locate()
     end
 
-    if not self.aware.state.collected then
-        self.aware.state.collected = 0
+    -- set home if we don't have one
+    if not self.state.home then
+        self.state.home = utils.deepCopy(self.state.pos)
     end
 
-    self.aware:saveState(self.aware.state)
+    -- write the current state back to file
+    self:saveState(self.state)
 
     return self
 end
 
---- Attack with the turtle in a particular direction
--- @param d string: nil, forward, up, or down
--- @return boolean
-function Miner:attack(d)
-    if not d or d == "forward" then
-        return turtle.attack()
-    elseif d == "up" then
-        return turtle.attackUp()
-    elseif d == "down" then
-        return turtle.attackDown()
+--- ===============================================================
+--- DATABASE METHODS
+--- ===============================================================
+
+--- Fetch any saved state
+-- @return table,nil
+function Aware:getState()
+    if fs.exists(self.dbPath) then
+        local file = fs.open(self.dbPath, "r")
+        local state = textutils.unserialize(file.readAll())
+
+        file.close()
+
+        return state
     end
 
-    return false
+    return nil
 end
 
---- Drop items in a particular direction
--- @param d string: nil, forward, up, or down
--- @param c number: number of items to drop
+--- Save a new state
+-- @param state table
+function Aware:saveState(state)
+    local file = fs.open(self.dbPath, "w")
+
+    file.write(textutils.serialize(state))
+    file.close()
+
+    os.queueEvent("stateSaved")
+end
+
+--- Delete the state
+function Aware:deleteState()
+    return fs.delete(fs.combine("database", programName))
+end
+
+--- ===============================================================
+--- ROTATION METHODS
+--- ===============================================================
+
+--- Turn the turtle to the left, update facing position, and save state
 -- @return boolean
-function Miner:drop(d, c)
-    if not d or d == "forward" then
-        return turtle.drop(c)
-    elseif d == "up" then
-        return turtle.dropUp(c)
-    elseif d == "down" then
-        return turtle.dropDown(c)
+function Aware:turnLeft()
+    turtle.turnLeft()
+    self.state.pos.f = self.state.pos.f == 1 and 4 or self.state.pos.f - 1
+    self:saveState(self.state)
+
+    return true
+end
+
+--- Turn the turtle to the right, update facing position, and save state
+-- @return boolean
+function Aware:turnRight()
+    turtle.turnRight()
+    self.state.pos.f = self.state.pos.f == 4 and 1 or self.state.pos.f + 1
+    self:saveState(self.state)
+
+    return true
+end
+
+--- Turn the turtle a requested direction, update facing position, and save state
+-- @param n number, string: either 1,2,3,4 or x,-x,z,-z
+-- @param c boolean: should use cardinal directions?
+-- @return boolean
+function Aware:turnTo(n, c)
+    -- for both relative and cardinal directions, these axis always map to correct values
+    if type(n) == "string" then
+        if n == "x" then
+            n = 2
+        elseif n == "-x" then
+            n = 4
+        elseif n == "-z" then
+            n = 1
+        elseif n == "z" then
+            n = 3
+        end
+    else
+        if not c then
+            -- update n to be the correct relative value based on the home facing direction
+            -- if home f is 3 and n is 2, we update n to 4
+            n = self.directionMap[self.state.home.f][n]
+        end
     end
 
-    return false
-end
+    local diff = self.state.pos.f - n
 
---- Detect with the turtle in a particular direction
--- @param d string: nil, forward, up, or down
--- @return boolean
-function Miner:detect(d)
-    if not d or d == "forward" then
-        return turtle.detect()
-    elseif d == "up" then
-        return turtle.detectUp()
-    elseif d == "down" then
-        return turtle.detectDown()
-    end
-
-    return false
-end
-
---- Inspect with the turtle in a particular direction
--- @param d string: nil, forward, up, or down
--- @return boolean
-function Miner:inspect(d)
-    if not d or d == "forward" then
-        return turtle.inspect()
-    elseif d == "up" then
-        return turtle.inspectUp()
-    elseif d == "down" then
-        return turtle.inspectDown()
-    end
-
-    return false
-end
-
---- Dig with the turtle in a particular direction
--- @param d string: nil, up, or down
--- @return boolean
-function Miner:dig(d)
-    if not d or d == "forward" then
-        return turtle.dig()
-    elseif d == "up" then
-        return turtle.digUp()
-    elseif d == "down" then
-        return turtle.digDown()
-    end
-
-    return false
-end
-
---- Turn the turtle left or right
--- @param d string: left, right
--- @return boolean
-function Miner:turn(d)
-    if d == "left" then
-        return self.aware:turnLeft()
-    elseif d == "right" then
-        return self.aware:turnRight()
-    end
-
-    return false
-end
-
---- Turn the turtle to a particular direction, either a 1-4 value or an x,-x,y,-y,z,-z value
--- @param n number, string: direction 1234, or x,-x,z,-z
--- @param c boolean: should be interpreted as cardinal directions?
--- @return boolean
-function Miner:turnTo(n, c)
-    return self.aware:turnTo(n, c)
-end
-
---- Turn the turtle around 180 degrees
--- @return boolean
-function Miner:turnAround()
-    for i = 1, 2 do
-        local res = self:turn("right")
-
-        if not res then
-            return false
+    while n ~= self.state.pos.f do
+        if diff == 1 or diff == -3 then
+            self:turnLeft()
+        else
+            self:turnRight()
         end
     end
 
     return true
 end
 
---- Private method to move the turtle one block in any direction
--- @param d nil, string: direction
+--- Turn the turtle around 180 degrees
 -- @return boolean
-function Miner:_m(d)
-    if not d then
-        d = "forward"
+function Aware:turnAround()
+    for i = 1, 2 do
+        self:turnLeft()
     end
 
-    return self.aware[d](self.aware, 1, true)
+    return true
 end
 
---- Public method to move the turtle one block in any direction. If invert is true, the turtle will move the opposite direction
--- @param d string: the direction the turtle should move
--- @param invert boolean: Flag telling the move the turtle in the inverse direction
+--- ===============================================================
+--- LOCATION UPDATE METHODS
+--- ===============================================================
+
+--- Update the turtle's X or Z axis coordinate based on its current facing position and if the back param is passed
+-- @param back boolean: was the move a backwards movement?
+-- @return table
+function Aware:updateXZ(back)
+    if self.state.pos.f == 1 then
+        self.state.pos.z = back and self.state.pos.z + 1 or self.state.pos.z - 1
+    elseif self.state.pos.f == 2 then
+        self.state.pos.x = back and self.state.pos.x - 1 or self.state.pos.x + 1
+    elseif self.state.pos.f == 3 then
+        self.state.pos.z = back and self.state.pos.z - 1 or self.state.pos.z + 1
+    elseif self.state.pos.f == 4 then
+        self.state.pos.x = back and self.state.pos.x + 1 or self.state.pos.x - 1
+    end
+
+    self:saveState(self.state)
+
+    return self.state.pos
+end
+
+--- Update the turtle's Y axis coordinate based on its moving up or down
+-- @param down boolean: was the move a downward move?
+-- @return table
+function Aware:updateY(down)
+    self.state.pos.y = down and self.state.pos.y - 1 or self.state.pos.y + 1
+    self:saveState(self.state)
+
+    return self.state.pos
+end
+
+--- Set a checkpoint position that the system can later use to recover from
+function Aware:setCheckpoint()
+    self.state.checkpoint = utils.deepCopy(self.state.pos)
+
+    self:saveState(self.state)
+end
+
+--- ===============================================================
+--- MOVEMENT METHODS
+--- ===============================================================
+
+--- Move the turtle in a particular direction
+
+-- @param dir string: direction
+-- @param dist string: distance
+-- @param canDig boolean: can dig
 -- @return boolean
-function Miner:move(d, invert)
-    if not d then
-        d = "forward"
+function Aware:move(dir, dist, canDig)
+    -- default direction
+    if not dir then
+        dir = "forward"
     end
 
-    if invert then
-        d = self.invert[d]
+    -- default distance of 1
+    if not dist then
+        dist = 1
     end
 
-    local moved = false
+    -- ensure valid direction
+    if dir ~= "forward" and dir ~= "back" and dir ~= "up" and dir ~= "down" then
+        error("invalid direction")
+    end
 
-    while true do
-        -- attempt to move the turtle
-        moved = self:_m(d)
+    -- for each distance
+    for i = 1, dist do
+        -- attempt to move turtle in direction
+        while not turtle[dir]() do
+            if turtle.getFuelLevel() == 0 then
+                return false
+            end
 
-        -- if the turtle moved, return true
-        if moved then
-            break
-        end
+            local detectMethod = "detect"
+            local digMethod = "dig"
+            local attackMethod = "attack"
+            local fail = false
 
-        -- if the turtle didnt move because of fuel, return false
-        if turtle.getFuelLevel() == 0 then
-            return false
-        end
-
-        -- if the direction is back, we need to turn around to detect
-        if d == "back" then
-            self:turnAround()
-        end
-
-        -- if the turtle didnt move because of a block, return false
-        local detectResult = self:detect(d == "back" and "forward" or d)
-
-        -- turn the turtle back around
-        if d == "back" then
-            self:turnAround()
-        end
-
-        -- if there is a block in front, that's why it didnt move, return false this is normal
-        if detectResult then
-            return false
-        end
-
-        -- finally, if the turtle didnt move, but he has fuel, and there is no block in his way, some entity is blocking him, so we must smash it
-        while true do
-            -- if the direction is back, we need to turn around to detect
-            if d == "back" then
+            -- if direction is back we need to turn around and face that block
+            if dir == "back" then
                 self:turnAround()
             end
 
-            local attackResult = self:attack(d == "back" and "forward" or d)
-
-            -- turn the turtle back around
-            if d == "back" then
-                self:turnAround()
+            -- update methods if up or down
+            if dir == "up" or dir == "down" then
+                detectMethod = detectMethod .. string.upper(string.sub(dir, 1, 1)) .. string.sub(dir, 2)
+                digMethod = digMethod .. string.upper(string.sub(dir, 1, 1)) .. string.sub(dir, 2)
+                attackMethod = attackMethod .. string.upper(string.sub(dir, 1, 1)) .. string.sub(dir, 2)
             end
 
-            if not attackResult then
-                break
-            else
-                print("attacked")
-            end
-        end
-    end
-
-    return moved
-end
-
---- Private method to make the turtle place a block in a particular direction
--- @param d string, nil: direction
--- @return boolean
-function Miner:_p(d)
-    if not d or d == "forward" then
-        return turtle.place()
-    elseif d == "up" then
-        return turtle.placeUp()
-    elseif d == "down" then
-        return turtle.placeDown()
-    end
-end
-
---- Private method to make the turtle place a specific block, by name, from its inventory
--- @param n string: name of block
--- @param d nil, string: direction
--- @return boolean
-function Miner:_pb(n, d)
-    if not n then
-        error("missing required name param")
-    end
-    if not d then
-        d = "forward"
-    end
-
-    if not self:detect(d) then
-        local slot = turtle.getSelectedSlot()
-
-        for i = 1, 16 do
-            if turtle.getItemCount(i) > 0 then
-                if turtle.getItemDetail(i).name == n then
-                    turtle.select(i)
-                    local result = self:_p(d)
-                    turtle.select(slot)
-
-                    return result
+            -- detect a block
+            if turtle[detectMethod]() then
+                if canDig then
+                    -- dig the detected block
+                    if not turtle[digMethod]() then
+                        fail = true
+                    end
+                else
+                    -- fail because we dont have permission to dig the block
+                    error("I need to dig, but I'm not allowed")
                 end
+            else
+                -- since we didnt move, and we didnt detect a block, and we're not out of fuel, must be some entity in the way, attack it!
+                turtle[attackMethod]()
+            end
+
+            if dir == "back" then
+                self:turnAround()
+            end
+
+            if fail then
+                return false
             end
         end
+
+        -- increment the number of blocks moved
+        self.state.blocksTraveled = self.state.blocksTraveled + 1
+
+        -- update stored position
+        if dir == "up" or dir == "down" then
+            self:updateY(dir == "down")
+        elseif dir == "forward" or dir == "back" then
+            self:updateXZ(dir == "back")
+        end
+    end
+
+    return true
+end
+
+--- Move the turtle forward 1 block
+-- @param dist number: how many blocks to dig
+-- @param dig boolean: can dig
+-- @return boolean
+function Aware:forward(dist, dig)
+    return self:move("forward", dist, dig)
+end
+
+--- Move the turtle backwards 1 block
+-- @param dist number: how many blocks to dig
+-- @param dig boolean: can dig
+-- @return boolean
+function Aware:back(dist, dig)
+    return self:move("back", dist, dig)
+end
+
+--- Move the turtle up one block
+-- @param dist number: how many blocks to dig
+-- @param dig boolean: can dig
+-- @return boolean
+function Aware:up(dist, dig)
+    return self:move("up", dist, dig)
+end
+
+--- Move the turtle down one block
+-- @param dist number: how many blocks to dig
+-- @param dig boolean: can dig
+-- @return boolean
+function Aware:down(dist, dig)
+    return self:move("down", dist, dig)
+end
+
+--- Move the turtle to a specific xyz coordinate, relative to the turtle's home position
+-- @param pos table: coordinates
+-- @param dig boolean: can dig
+-- @param order string: order of axis, xyz, zyx, yxz, etc
+-- @return boolean
+function Aware:moveTo(pos, dig, order)
+    if not order then
+        -- default order is y, x, z
+        if not self:moveToY(pos.y, dig) then
+            return false
+        end
+
+        if not self:moveToX(pos.x, dig) then
+            return false
+        end
+
+        if not self:moveToZ(pos.z, dig) then
+            return false
+        end
+
+        return self:turnTo(pos.f)
+    end
+
+    if string.len(order) ~= 3 then
+        error("invalid order length")
+    end
+
+    for i = 1, #order do
+        local char = order:sub(i, i)
+        if not self["moveTo" .. string.upper(char)](self, pos[char], dig) then
+            return false
+        end
+    end
+
+    return self:turnTo(pos.f)
+end
+
+--- Move the turtle to a specific X axis coordinate
+-- @param coord number: coordinate point
+-- @param dig boolean: can dig
+-- @return boolean
+function Aware:moveToX(coord, dig)
+    if self.state.pos.x == coord then
+        return true
+    end
+
+    if self.state.pos.x < coord then
+        self:turnTo("x")
+
+        return self:forward(coord - self.state.pos.x, dig)
+    elseif self.state.pos.x > coord then
+        self:turnTo("-x")
+
+        return self:forward(self.state.pos.x - coord, dig)
     end
 
     return false
 end
 
---- Helper method to make the turtle place cobble in a particular direction
--- @param d string, nil: direction
+--- Move the turtle to a specific Z axis coordinate
+-- @param coord number: coordinate point
+-- @param dig boolean: can dig
 -- @return boolean
-function Miner:placeCobble(d)
-    return self:_pb("minecraft:cobblestone", d)
+function Aware:moveToZ(coord, dig)
+    if self.state.pos.z == coord then
+        return true
+    end
+
+    if self.state.pos.z < coord then
+        self:turnTo("z")
+
+        return self:forward(coord - self.state.pos.z, dig)
+    elseif self.state.pos.z > coord then
+        self:turnTo("-z")
+
+        return self:forward(self.state.pos.z - coord, dig)
+    end
+
+    return false
 end
 
---- Helper method to make the turtle place a torch in a particular direction
--- @param d nil, string: direction
+--- Move the turtle to a specific Y axis coordinate
+-- @param coord number: coordinate point
+-- @param dig boolean: can dig
 -- @return boolean
-function Miner:placeTorch(d)
-    return self:_pb("minecraft:torch", d)
+function Aware:moveToY(coord, dig)
+    if self.state.pos.y == coord then
+        return true
+    end
+
+    if self.state.pos.y < coord then
+        return self:up(coord - self.state.pos.y, dig)
+    elseif self.state.pos.y > coord then
+        return self:down(self.state.pos.y - coord, dig)
+    end
+
+    return false
 end
 
---- Get a table of slots which are empty in the turtle's inventory
--- @return table: table of empty slots
-function Miner:getEmptySlots()
-    local t = {}
+--- ===============================================================
+--- UTILITY METHODS
+--- ===============================================================
 
-    for i = 1, 16 do
-        if turtle.getItemCount(i) == 0 then
-            table.insert(t, i)
-        end
+--- Detect if the turtle has GPS capability
+--@return boolean: does the turtle have GPS functionality
+function Aware:hasGPS()
+    local x = gps.locate(5)
+
+    -- if x returns a value, we know that gps is working
+    if x then
+        return true
     end
 
-    return t
-end
+    local equipResult, slotNumber = self:equip("computercraft:wireless_modem_advanced", "right")
 
---- Make the turtle drop any items considered to be trash
--- @return boolean
-function Miner:dropTrash()
-    local slot = turtle.getSelectedSlot()
+    if equipResult then
+        x = gps.locate(5)
 
-    for i = 1, 16 do
-        local item = turtle.getItemDetail(i)
+        -- re-equip the previously equipped item
+        turtle.select(slotNumber)
+        turtle.equipRight()
 
-        if item then
-            -- if explicitly trashed
-            -- if not and ore and not explicitly set to keep
-            if self.trash[item.name] and not self.keepItems[item.name] then
-                if not turtle.select(i) then
-                    return false
-                end
-                if not self:drop("forward", item.count) then
-                    return false
-                end
-            end
-        end
-    end
-
-    return turtle.select(slot)
-end
-
---- Refuel the turtle with any fuel item from its inventory, except torches
--- @param targetFuelLevel number: target fuel level for the turtle
--- @return boolean
-function Miner:useFuel(targetFuelLevel)
-    -- cache the currently selected slot, so we can put it back when we're done
-    local slot = turtle.getSelectedSlot()
-
-    -- loop through the entire inventory
-    for i = 1, 16 do
-        if not turtle.select(i) then
-            return false
-        end
-
-        -- if we've reached our fuel target, we can quit
-        if turtle.getFuelLevel() >= targetFuelLevel then
-            break
-        end
-
-        local itemDetail = turtle.getItemDetail(i)
-
-        -- if the item is able to be used as fuel and is not at torch (we want to keep those)
-        if turtle.refuel(0) and itemDetail.name ~= "minecraft:torch" then
-            local fuelPer
-
-            -- try to get a better estimate on what the fuel is
-            if self.fuelValues[itemDetail.name] then
-                fuelPer = self.fuelValues[itemDetail.name]
-            else
-                fuelPer = 80
-            end
-
-            -- get the number of items we can eat for fuel
-            local count = turtle.getItemCount()
-
-            -- reduce the number of items to consume until we are at or below the target fuel level
-            while (turtle.getFuelLevel() + (count * fuelPer)) > targetFuelLevel and count > 1 do
-                count = count - 1
-            end
-
-            -- burn that shit
-            turtle.refuel(count)
-        end
-    end
-
-    return turtle.select(slot)
-end
-
---- Return a table containing inventory slots with fuel items, and the total value of fuel in each slot, as well as the grand total value of all fuel slots added together
--- @return table, number
---function Miner:getFuelInventory()
---    local slot = turtle.getSelectedSlot()
---    local slotsWithFuel = {}
---    local totalFuelInventory = 0
---
---    for i = 1, 16 do
---        local itemDetail = turtle.getItemDetail(i)
---
---        if itemDetail then
---            turtle.select(i)
---
---            if turtle.refuel(0) then
---                local count = itemDetail.count
---                local fuelPer = self.fuelValues[itemDetail.name]
---
---                if fuelPer then
---                    slotsWithFuel[tostring(i)] = count * fuelPer
---                end
---            end
---        end
---    end
---
---    for _, v in pairs(slotsWithFuel) do
---        totalFuelInventory = totalFuelInventory + v
---    end
---
---    -- reselect previously selected inventory slot
---    turtle.select(slot)
---
---    return slotsWithFuel, totalFuelInventory
---end
-
---- Make the turtle unload its entire inventory to the block at a particular direction
--- @param d string,nil: direction
--- @return boolean
-function Miner:unload(d)
-    if not d then
-        d = "forward"
-    end
-
-    -- if there is no block in the direction we are unloading, error out
-    if not self:detect(d) then
-        error("I have nowhere to put these items!")
-    end
-
-    -- get the details of the block we are supposed to unload into
-    local ok, details = self:inspect(d)
-
-    if not ok or type(details) ~= "table" then
-        error("Could not inspect block in direction: " .. d)
-    end
-
-    if not self:isStorageItem(details) then
-        error("Cannot deposit items into " .. details.name)
-    end
-
-    -- cache the slot we already have selected
-    local slot = turtle.getSelectedSlot()
-
-    -- an aggregate total of fuel that we choose to keep in the turtle inventory as a fuel reserve
-    -- this is needed so once we accumulate enough to meet the fuel reserve, we can dump the rest
-    local fuelKept = 0
-
-    for i = 1, 16 do
-        local item = turtle.getItemDetail(i)
-
-        if item and not self.keepItems[item.name] then
-            local amountToDrop
-
-            -- if the item can be used as fuel, we need to do some extra processing
-            -- because we want to keep _some_ fuel in the inventory as a reserve
-            if self.fuelValues[item.name] then
-                local amountToKeep = 0
-
-                for j = 1, item.count do
-                    -- if we've already kept enough fuel we
-                    if fuelKept >= self.fuelReserve then
-                        break
-                    end
-
-                    amountToKeep = j
-                    fuelKept = fuelKept + self.fuelValues[item.name]
-                end
-
-                amountToDrop = item.count - amountToKeep
-            else
-                amountToDrop = item.count
-            end
-
-            turtle.select(i)
-
-            if not self:drop(d, amountToDrop) then
-                return false
-            end
-        end
-    end
-
-    return turtle.select(slot)
-end
-
---- Helper method to check whether or not the turtle is at its home position
--- @return boolean
-function Miner:isHome()
-    return (self.aware.state.pos.x == self.aware.state.home.x and self.aware.state.pos.z == self.aware.state.home.z and self.aware.state.y == self.aware.state.home.y and self.aware.state.pos.f == self.aware.state.home.f)
-end
-
---- Make the turtle go to its home position, following a particular axis order
--- @param order, string: the order of axis to move
--- @return boolean
-function Miner:goHome(order)
-    return self.aware:moveTo(self.aware.state.home, true, order)
-end
-
---- Determine if an item details is a valid storage item
-function Miner:isStorageItem(item)
-    if not item then
-        return false
-    end
-
-    return self.validStorage[item.name] == true
-end
-
---- Return a slot in the turtle that contains a block that acts as portable storage, such as a shulker box
--- @return boolean
-function Miner:selectStorageItem()
-    for i = 1, 16 do
-        local item = turtle.getItemDetail(i)
-
-        if self:isStorageItem(item) then
-            turtle.select(i)
-
+        if x then
             return true
         end
     end
@@ -559,437 +457,136 @@ function Miner:selectStorageItem()
     return false
 end
 
---- Consolidate partial stacks of items to save inventory space
-function Miner:compact()
-    local incompleteStacks = {}
-
-    -- compact stacks
+--- Equip an item on a side of the turtle
+--@param name string: the name of the item to equip
+--@param side string: which side of the turtle, left or right
+--@return boolean, number,nil
+function Aware:equip(name, side)
+    -- check for item in turtle inventory that we can equip
     for i = 1, 16 do
         local item = turtle.getItemDetail(i)
 
-        if item then
-            local name = item.name
-            local existingSlot = incompleteStacks[name]
+        if item and item.name == name then
+            turtle.select(i)
 
-            if existingSlot then
-                turtle.select(i)
-                turtle.transferTo(existingSlot)
-
-                if turtle.getItemCount() > 0 then
-                    incompleteStacks[name] = i
-                end
-            else
-                incompleteStacks[name] = i
-            end
-        end
-    end
-end
-
---- Make the turtle return to home to unload its inventory, and move back to its previous position
--- @return boolean
-function Miner:pitStop()
-    local lastAction = self.aware.state.currentAction
-
-    self:setCurrentAction("pitstop")
-
-    local loc = self.aware.state.pos
-
-    self.aware.state.pos.temp = { x = loc.x, y = loc.y, z = loc.z, f = loc.f }
-
-    -- has the turtle been successfully unloaded?
-    local unloadSuccess = false
-
-    -- if has some onboard portable chest-like item, try to use that
-    -- places down the storage item
-    -- unloads inventory into the storage item (self:unload())
-    -- digs digs the block back up and carries on
-    if self:selectStorageItem() then
-        local canPlace = false
-        local placeDir
-
-        -- find a spot to place the chest
-        for _ = 1, 4 do
-            if not self:detect() then
-                canPlace = true
-                break
-            end
-
-            self:turn("right")
-        end
-
-        -- if we still can't place, check above and below
-        if not canPlace then
-            if not self:detect("up") then
-                canPlace = true
-                placeDir = "up"
-            elseif not self:detect("down") then
-                canPlace = true
-                placeDir = "down"
-            end
-        end
-
-        -- place the chest, unload into the chest, dig the chest back up
-        if canPlace then
-            self:_p(placeDir)
-
-            unloadSuccess = self:unload(placeDir)
-
-            self:dig(placeDir)
+            -- return the result of the item equip and the slot number that was equipped
+            return turtle["equip" .. string.upper(string.sub(side, 1, 1)) .. string.sub(side, 2)](), i
         end
     end
 
-    -- if the done flag is false, that means we did not unload everything into an onboard storage item, so we need to go home and unload
-    if not unloadSuccess then
-        -- go home
-        if not self:goHome(self.aware.state.axis.branch .. self.aware.state.axis.trunk .. "y") then
-            return false
-        end
+    -- if we didnt find the item in the inventory, we need to see if the item is already equipped
+    -- we can do this, but we first need to find an empty inventory slot to unequip the item to check what it is
+    for i = 1, 16 do
+        local item = turtle.getItemDetail(i)
 
-        -- turn to front
-        if not self:turnTo(1) then
-            return false
-        end
+        -- find empty slot to swap out with equipped item
+        if not item then
+            -- select the empty slot
+            turtle.select(i)
 
-        -- unload into chest, default placement is above turtle
-        if not self:unload("up") then
+            -- attempt to unequip item into selected slot
+            turtle["equip" .. string.upper(string.sub(side, 1, 1)) .. string.sub(side, 2)]()
+
+            -- check if item is now in selected slot
+            item = turtle.getItemDetail(i)
+
+            -- put whatever it was back
+            turtle["equip" .. string.upper(string.sub(side, 1, 1)) .. string.sub(side, 2)]()
+
+            if item and item.name == name then
+                return true, i
+            end
+
             return false
         end
     end
 
-    -- return to loc in moving axis in reverse
-    if not self.aware:moveTo(self.aware.state.pos.temp, true, "y" .. self.aware.state.axis.trunk .. self.aware.state.axis.branch) then
-        return false
-    end
+    printError("Unable to find item to equip: " .. name)
 
-    -- unset temp loc
-    self.aware.state.pos.temp = nil
-
-    self:setCurrentAction(lastAction)
-
-    return true
+    return false
 end
 
---- Check for non ignored blocks in all blocks around the turtle.
---- If blocks are found follow those blocks and repeat the checking,
---- until no more blocks are found, then retrace steps back to where it started
--- @param string direction: which direction the turtle moved into this block
--- @return boolean
-function Miner:recursiveDig(dir)
-    --- check if a block should be mined or not
-    --
-    -- @param d string: direction
-    --
-    -- @return boolean
-    local function check(d)
-        if self:detect(d) then
-            local result, block = self:inspect(d)
+--- Find the direction the turtle is facing by moving one block forward, and seeing which axis changed
+--- NOTE: this method will assumes that the modem is already equipped, because of how I am calling it.. ymmv
+-- @param x number
+-- @param z number
+-- @return number
+function Aware:getDirection(x, z)
+    local equipSuccess, slot
 
-            if not result or type(block) ~= "table" then
-                error("Could not inspect block in direction: " .. d)
-            end
-
-            -- if its an ore
-            -- if its not ignored
-            if result then
-                if (string.sub(block.name, -4) == "_ore" and not self.ignore[block.name]) or self.keepItems[block.name] then
-                    self.aware.state.collected = self.aware.state.collected + 1
-
-                    return true
-                end
-            end
-        end
-
-        return false
+    -- move 1 block forward so we can get an updated position
+    while not self:move("forward", 1, true) do
+        equipSuccess, slot = self:equip("minecraft:diamond_pickaxe", "right")
     end
 
-    --- helper function to dig blocks recursively in a direction
-    --
-    -- @param d string: direction
-    local function dig(d)
-        self:dig(d)
-        self:freeUpSpace()
-        self:move(d)
-        self:recursiveDig(d)
-        self:move(d, true) -- moves the inverse
+    if equipSuccess then
+        turtle.select(slot)
+        turtle.equipRight()
     end
 
-    --------------------------------- begin recursive checking ---------------------------------
+    -- get updated gps location
+    local nx, _, nz = gps.locate(5)
 
-    local positions = { "forward", "left", "right", "up", "down", "back" }
+    -- reset position after getting update
+    self:move("back", 1, true)
 
-    -- remove the inverse of forward, up, or down, because
-    -- we dont need to check the direction we came from
-    if dir == "forward" or dir == "up" or dir == "down" then
-        local indexToRemove
-
-        for key, v in pairs(positions) do
-            if v == self.invert[dir] then
-                indexToRemove = key
-                break
-            end
-        end
-
-        positions[indexToRemove] = nil
+    -- determine face
+    if z > nz then
+        return 1
+    elseif x < nx then
+        return 2
+    elseif z < nz then
+        return 3
+    elseif x > nx then
+        return 4
     end
 
-    -- loop over the remaining directions and handle accordingly
-    for _, v in pairs(positions) do
-        dir = v
+    error("Unknown direction")
+end
 
-        -- turn to direction
-        if v == "left" then
-            self:turn("left")
-        elseif v == "right" then
-            self:turn("right")
-        elseif v == "back" then
-            self:turnAround()
+--- Using GPS, get the precise location of the miner, including direction
+--@return table,nil
+function Aware:locate()
+    if not self.state.hasGPS then
+        error("GPS is not enabled on this turtle")
+    end
+
+    local x, y, z = gps.locate(5)
+
+    local pos
+
+    if x then
+        pos = {
+            x = x,
+            y = y,
+            z = z,
+            f = self:getDirection(x, z)
+        }
+    else
+        local _, slotNumber = self:equip("computercraft:wireless_modem_advanced", "right")
+
+        x, y, z = gps.locate(5)
+
+        -- we got a gps result
+        if x then
+            pos = {
+                x = x,
+                y = y,
+                z = z,
+                f = self:getDirection(x, z)
+            }
         end
 
-        -- for both and right, we just check forward
-        -- because we turn to face that direction
-        if v == "left" or v == "right" or v == "back" then
-            dir = "forward"
-        end
+        -- put the previous item back
+        turtle.select(slotNumber)
+        turtle.equipRight()
 
-        if check(dir) then
-            dig(dir)
-        end
-
-        -- turn back to front
-        if v == "left" then
-            self:turn("right")
-        elseif v == "right" then
-            self:turn("left")
-        elseif v == "back" then
-            self:turnAround()
+        if not x then
+            error("I am equipped with GPS, but there appears not to be a GPS host")
         end
     end
 
-    return true
+    return pos
 end
 
-function Miner:freeUpSpace()
-    -- refuel if necessary
-    if turtle.getFuelLevel() < 1000 then
-        self:useFuel(1000)
-    end
-
-    -- consolidate partial stacks where possible
-    if #self:getEmptySlots() <= 1 then
-        self:compact()
-    end
-
-    -- check if there are empty slots, dump any useless blocks to save space
-    if #self:getEmptySlots() <= 1 then
-        self:dropTrash()
-    end
-
-    -- if after dump useless blocks the empty space is 1, go unload
-    if #self:getEmptySlots() <= 1 then
-        self:pitStop()
-    end
-end
-
---- Helper function to branch vein mine
--- @param data table
-function Miner:veinMine(data)
-    local f = data.f -- facing direction
-    local l = data.l -- length
-    local b = data.b -- block number
-    local t = data.t -- place torches?
-    local c = data.c -- place cobble?
-    local a = data.a -- action
-
-    -- default the block number to 1
-    if not b then
-        b = 1
-    end
-
-    self:setCurrentAction(a)
-
-    if self.aware.state.pos.f ~= f then
-        self:turnTo(f)
-    end
-
-    -- for each block length of the branch...
-    for i = b, l do
-        self.aware:setCheckpoint()
-        self:setCurrentBlock(i)
-
-        local shouldPlaceTorch = t and (i == 2 or (i - 2) % 14 == 0)
-
-        -- for each block in the current position (bottom and top because it is a 2-tall tunnel)
-        for j = 1, 2 do
-            self:freeUpSpace()
-
-            -- recursive dig the blocks on this level
-            self:recursiveDig("forward")
-
-            if j == 1 then
-                if self.aware.state.pos.y == self.aware.state.yLevel then
-                    if c then
-                        self:placeCobble("down")
-                    end
-
-                    self:move("up")
-                else
-                    self:move("down")
-
-                    if c then
-                        self:placeCobble("down")
-                    end
-                end
-            end
-        end
-
-        if i < l then
-            self:move("forward")
-        end
-
-        if shouldPlaceTorch then
-            if self.aware.state.pos.y == self.aware.state.yLevel then
-                self:turnAround()
-                self:placeTorch()
-                self:turnAround()
-            end
-        end
-    end
-
-    -- branches with even numbered blocks will end on the bottom, and we want to end on the top
-    if self.aware.state.pos.y == self.aware.state.yLevel and a == "vein" then
-        self:move("up")
-    end
-
-    self.aware:setCheckpoint()
-
-    self:setCurrentBlock()  -- reset the current block
-    self:setCurrentAction() -- reset the current action
-end
-
---- ===============================================================
---- STATE MANAGEMENT METHODS
---- ===============================================================
-
---- TODO
-function Miner:setCurrentAction(a)
-    self.aware.state.currentAction = a
-
-    self.aware:saveState(self.aware.state)
-end
-
---- TODO
-function Miner:setCurrentBranch(n)
-    self.aware.state.currentBranch = n
-
-    self.aware:saveState(self.aware.state)
-end
-
---- TODO
-function Miner:setCurrentBlock(n)
-    self.aware.state.currentBlock = n
-
-    self.aware:saveState(self.aware.state)
-end
-
---- ===============================================================
---- GUI METHODS
---- ===============================================================
-
-function Miner:clearLine()
-    local x, y = term.getCursorPos()
-
-    term.setCursorPos(1, y)
-    write("|                                     |")
-    term.setCursorPos(x, y)
-end
-
-function Miner:guiStats()
-    local action = self.aware.state.currentAction
-    local actionResourceMsg = action and self.resourceMessages.action[action] or "Awaiting Work"
-    local actionMessage
-
-    -- write the current action line
-    term.setCursorPos(3, 2)
-    self:clearLine()
-    write("Current Action: " .. actionResourceMsg .. "...")
-
-    if action == "descend" then
-        actionMessage = "Descending to Y-Level " .. self.aware.state.yLevel
-    elseif action == "vein" then
-        actionMessage = "On Branch " .. self.aware.state.currentBranch .. "/" .. self.aware.state.branchCount
-
-        if self.aware.state.currentBlock then
-            actionMessage = actionMessage ..
-                ", Block " .. self.aware.state.currentBlock .. "/" .. self.aware.state.branchLength
-        end
-    elseif action == "back" then
-        actionMessage = "Moving back to the trunk"
-    elseif action == "trunk" then
-        actionMessage = "Mining trunk to branch " .. self.aware.state.currentBranch + 1
-    elseif action == "pitstop" then
-        actionMessage = "Shitter's full, gotta dump"
-    elseif action == "checkpoint" then
-        actionMessage = "Moving to saved checkpoint"
-    elseif action == "home" then
-        actionMessage = "Finishing mining, heading home"
-    elseif action == "done" then
-        actionMessage = "Operation Complete. Mined " ..
-            self.aware.state.branchCount .. "B " .. self.aware.state.branchLength .. "L"
-    end
-
-    if actionMessage then
-        term.setCursorPos(3, 4)
-        self:clearLine()
-        write(actionMessage)
-    end
-
-    -- total blocks traveled
-    term.setCursorPos(3, 6)
-    self:clearLine()
-    write("Distance Traveled : " .. self.aware.state.blocksTraveled)
-
-    -- total ores mined
-    term.setCursorPos(3, 7)
-    self:clearLine()
-    write("Blocks Collected  : " .. self.aware.state.collected)
-
-    -- current fuel level
-    term.setCursorPos(3, 8)
-    self:clearLine()
-    write("Fuel Level        : " .. turtle.getFuelLevel())
-
-    -- target y level
-    term.setCursorPos(3, 9)
-    self:clearLine()
-    write("Target Y-Level    : " .. self.aware.state.yLevel)
-end
-
-function Miner:guiFrame()
-    term.clear()
-
-    -- side borders
-    for i = 1, 13 do
-        term.setCursorPos(1, i)
-        write("|")
-        term.setCursorPos(39, i)
-        write("|")
-    end
-
-    -- top border
-    term.setCursorPos(1, 1)
-    write("O-------------------------------------O")
-
-    -- middle line
-    term.setCursorPos(1, 5)
-    write("O-------------------------------------O")
-
-    -- bottom border
-    term.setCursorPos(1, 13)
-    write("O-------------------------------------O")
-
-    -- move cursor to bottom
-    local w, h = term.getSize()
-    term.setCursorPos(1, h)
-end
-
-return Miner
+return Aware
