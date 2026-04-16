@@ -1,6 +1,6 @@
 local utils = {}
 
-function utils.deepCopy(t)
+local function deepCopy(t)
     local clone = {}
 
     for k, v in pairs(t) do
@@ -9,12 +9,14 @@ function utils.deepCopy(t)
             -- if value is a table
             clone[k] = deepCopy(v) -- recursively copy that too
         else
-            clone[k] = v -- just copy the value.
+            clone[k] = v           -- just copy the value.
         end
     end
 
     return clone
 end
+
+utils.deepCopy = deepCopy
 
 utils.minerKeep = {
     ["minecraft:torch"] = true,

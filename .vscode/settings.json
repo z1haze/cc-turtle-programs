@@ -1,0 +1,13 @@
+{
+  "Lua.diagnostics.globals": [
+    "turtle",
+    "printError",
+    "shell",
+    "fs",
+    "term",
+    "write",
+    "textutils",
+    "read",
+    "parallel"
+  ]
+}

@@ -15,7 +15,7 @@ local aware = Aware.new()
 local Miner = require("Miner")
 local miner = Miner.new(aware)
 
-function setup()
+local function setup()
     local branchCount, branchLength, branchGap, currentY, targetY, placeTorches
 
     -- capture trunk length
@@ -123,7 +123,7 @@ function setup()
     miner.aware:saveState(miner.aware.state)
 end
 
-function doIt()
+local function doIt()
     if not resume then
         setup()
     end
@@ -143,7 +143,8 @@ function doIt()
 
         if miner.aware.state.checkpoint then
             miner:setCurrentAction("checkpoint")
-            miner.aware:moveTo(miner.aware.state.checkpoint, true, "y" .. miner.aware.state.axis.trunk .. miner.aware.state.axis.branch)
+            miner.aware:moveTo(miner.aware.state.checkpoint, true,
+                "y" .. miner.aware.state.axis.trunk .. miner.aware.state.axis.branch)
             miner:setCurrentAction()
         else
             -- if we are home or we are in the main chute

@@ -25,13 +25,8 @@ function Miner.new(aware)
 
     self.fuelValues = {
         ["minecraft:coal"] = 80,
-        ["minecraft:charcoal"] = 80,
         ["minecraft:lava_bucket"] = 1000,
-        ["minecraft_coal_block"] = 800,
-        ["minecraft_charcoal_block"] = 800,
-        ["immersiveengineering:coke"] = 1600,
-        ["immersiveengineering:coal_coke"] = 160,
-        ["modern_industrialization:lignite_coal"] = 80
+        ["minecraft:coal_block"] = 800
     }
 
     self.keepItems = utils.minerKeep
@@ -472,10 +467,14 @@ function Miner:unload(d)
     end
 
     -- get the details of the block we are supposed to unload into
-    local _, details = self:inspect(d)
+    local ok, details = self:inspect(d)
+
+    if not ok or type(details) ~= "table" then
+        error("Could not inspect block in direction: " .. d)
+    end
 
     -- if the item i'm supposed to be unloading into is not a storage item, wtf are you even doing
-    if not self:isStorageItem(details) and not details.tags["forge:chests"] and not details.tags["c:chests"] then
+    if not self:isStorageItem(details) then
         error("Cannot deposit items into " .. details.name)
     end
 
@@ -542,30 +541,14 @@ function Miner:isStorageItem(item)
         return false
     end
 
-    -- iterate through the keys and values of the table, which are block names, and block tags
-    for k, v in pairs(self.validStorage) do
-        -- iterate over the keys and values of each table which are number,string or string,boolean
-        for kk, _ in pairs(v) do
-            -- check against valid names
-            if k == "name" and item.name == v[kk] then
-                return true
-            end
-
-            -- check against valid tags
-            if k == "tags" and item.tags[kk] then
-                return true
-            end
-        end
-    end
-
-    return false
+    return self.validStorage[item.name] == true
 end
 
 --- Return a slot in the turtle that contains a block that acts as portable storage, such as a shulker box, or immersive engineering crate
 -- @return boolean
 function Miner:selectStorageItem()
     for i = 1, 16 do
-        local item = turtle.getItemDetail(i, true)
+        local item = turtle.getItemDetail(i)
 
         if self:isStorageItem(item) then
             turtle.select(i)
@@ -601,7 +584,6 @@ function Miner:compact()
             end
         end
     end
-
 end
 
 --- Make the turtle return to home to unload its inventory, and move back to its previous position
@@ -706,6 +688,10 @@ function Miner:recursiveDig(dir)
             -- if its an ore
             -- if its not ignored
             if result then
+                if type(block) ~= "table" then
+                    error("Could not inspect block in direction: " .. d)
+                end
+
                 if (string.sub(block.name, -4) == "_ore" and not self.ignore[block.name]) or self.keepItems[block.name] then
                     self.aware.state.collected = self.aware.state.collected + 1
 
@@ -877,7 +863,7 @@ function Miner:veinMine(data)
 
     self.aware:setCheckpoint()
 
-    self:setCurrentBlock() -- reset the current block
+    self:setCurrentBlock()  -- reset the current block
     self:setCurrentAction() -- reset the current action
 end
 
@@ -934,7 +920,8 @@ function Miner:guiStats()
         actionMessage = "On Branch " .. self.aware.state.currentBranch .. "/" .. self.aware.state.branchCount
 
         if self.aware.state.currentBlock then
-            actionMessage = actionMessage .. ", Block " .. self.aware.state.currentBlock .. "/" .. self.aware.state.branchLength
+            actionMessage = actionMessage ..
+                ", Block " .. self.aware.state.currentBlock .. "/" .. self.aware.state.branchLength
         end
     elseif action == "back" then
         actionMessage = "Moving back to the trunk"
@@ -947,7 +934,8 @@ function Miner:guiStats()
     elseif action == "home" then
         actionMessage = "Finishing mining, heading home"
     elseif action == "done" then
-        actionMessage = "Operation Complete. Mined " .. self.aware.state.branchCount .. "B " .. self.aware.state.branchLength .. "L"
+        actionMessage = "Operation Complete. Mined " ..
+            self.aware.state.branchCount .. "B " .. self.aware.state.branchLength .. "L"
     end
 
     if actionMessage then
