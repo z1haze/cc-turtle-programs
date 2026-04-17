@@ -6,7 +6,7 @@ local files = {
     ["3NKq6eVh"] = "mine.lua",
     ["rbEuHDXm"] = "Miner.lua",
     ["AbvVBMrM"] = "Aware.lua",
-    ["crFin3cA"] = "TurtleUtils.lua",
+    ["VstKVZYw"] = "TurtleUtils.lua",
     ["Bg2hsB5R"] = "Logger.lua",
     ["urxNRmJN"] = "GUIUtils.lua"
 }

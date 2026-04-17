@@ -97,6 +97,11 @@ local function setup()
         if maxY == nil then
             print("'" .. input .. "' should be a number")
         end
+
+        if maxY < minY then
+            maxY = nil
+            print("'" .. input .. "' cannot be less than minY")
+        end
     end
 
     while doRecursion == nil do
@@ -159,7 +164,13 @@ function main()
             ["minecraft:stone"] = true,     -- covers stone, granite, diorite, andesite (all metadata variants)
             ["minecraft:cobblestone"] = true,
             ["minecraft:gravel"] = true,
-            ["minecraft:obsidian"] = true
+            ["minecraft:obsidian"] = true,
+            -- quark
+            ["quark:roots_blue_flower"] = true,
+            ["quark:roots_black_flower"] = true,
+            ["quark:roots_white_flower"] = true,
+            -- project red
+            ["projectred-exploration:stone"] = true
         },
         storage = {
             ["minecraft:chest"] = true,
